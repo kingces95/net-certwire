@@ -23,7 +23,23 @@ own ids (e.g. Slack `event_id`).
 | `myslackproxy-web.py` | reference provisor web service: Slack OAuth install door + muse route-registration door |
 | `slack-listener.py` | reference provisor bridge: Slack Socket Mode → encrypted certwire payloads |
 | `muse-client.py` | reference muse client: `serve` = register (with sealed key) + listen + decrypt |
+| `certwire_app.py` | the app layer (below): (path, body) framing, admission table, demux, ack frames |
+| `muse-appd.py` | reference muse app daemon: one cert-bound connection carrying the knock + Slack apps |
+| `APP-PROTOCOL.md` | the app-layer protocol spec |
 | `test_certwire_crypto.py` | unit tests for the crypto module |
+
+## App layer (2026-10-23)
+
+certwire routes bytes and holds no policy; the protocol spoken
+over it lives in the endpoints' client library. The app layer is
+**POSTs with certified paths**: a frame carries a method, a path
+and a body over a cert-bound connection, admission is the
+receiving muse's local table of (sender cert address, path
+prefix) -> handler, and an optional ack frame is the delivery
+signal store-and-forward senders retry against. Live apps: the
+knockwire knock (guid paths -> the local knock spool, acked) and
+the Slack provisor feed (legacy encrypted envelopes). See
+`APP-PROTOCOL.md`.
 
 ## Payload encryption (Chris's design, 2026-10-19)
 
