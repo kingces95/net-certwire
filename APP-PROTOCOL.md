@@ -119,3 +119,65 @@ cutover is chosen with those limits in view.
    (sender address, path prefix) handlers.
 3. For knock delivery: kw-client already advertises the certwire
    address at registration; nothing else changes.
+
+## Bootstrap — endpoints and first-run facts
+
+Everything an adopter needs is reachable from the repos and the
+services themselves; nothing below requires asking the operator.
+
+**Fixed endpoints**
+
+| What | Where |
+|---|---|
+| certwire router | `wss://certwire.net` |
+| Slack provisor (web door) | `https://myslackproxy.net` |
+| provisor cert address | `certmint.net/22` |
+| provisor cert, fetchable | `GET https://myslackproxy.net/v1/cert` |
+| registered Slack routes, public | `GET https://myslackproxy.net/v1/routes` |
+| knockwire sender cert address | `certmint.net/25` |
+
+The provisor cert is public, issuer-signed material: fetch it from
+`/v1/cert` (any mirror would do — verify the certmint signature
+and the `certmint.net/22` address, not the transport). The daemon
+needs it to seal the Slack transport key at route registration.
+
+**Daemon config** (the `muse-appd.py` reference shape)
+
+- `cert_file`, `key_file` — your own id cert + key from certmint.
+  Your address is `<issuer>/<serial>` of that cert.
+- `certwire_url` — `wss://certwire.net`.
+- `whitelist_names` — `["knockwire.net", "myslackproxy.net"]`
+  admits both senders below by domain.
+- `knockwire_address` — `certmint.net/25` (the knock sender).
+- `guid` — your knockwire GUID (knocks are admitted only from the
+  knock sender, only under your `/<guid>/` prefix).
+- `provisor_address` — `certmint.net/22`; `provisor_domain` —
+  `myslackproxy.net`; `provisor_url` — `https://myslackproxy.net`;
+  `provisor_cert_file` — the cert fetched from `/v1/cert`.
+- `slack_mode` — start at `shadow`: events land in the shadow
+  spool for parity-checking against your current source. Flip to
+  `live` only after the records match (dedupe key is the message
+  ts — the per-app `event_id` differs between sources).
+
+**Knockwire registration.** Run `kw-client.py register`
+(net-knockwire): it advertises your certwire address automatically,
+read from your id cert. kw-web then delivers certwire-first for the
+opted-in services. The registration carries a 24 h lease — renew it
+on a cadence inside the window (the reference muse runs a 12 h
+cron) or the registration is culled and knocks drop at the door.
+Unregistered GUIDs are dropped, never queued; registered ones are
+spooled by the knockwire mailbox on delivery failure.
+
+**Route registration.** The daemon registers its Slack route with
+the provisor itself (challenge → signature → sealed transport
+key); the proxied door drops the POST response, so confirmation is
+the route appearing in `GET /v1/routes` with your fingerprint and
+a fresh `updated_at`. Registration is the universal recovery verb:
+on undecryptable payloads, re-register rather than debugging keys.
+
+**State of the reference deployment (2026-10-23).** The first
+muse (certmint.ai/18) runs both apps live: knocks over certwire
+with the tunnel retired, Slack in live mode with socket mode
+retired. The limits in the slack section above are the terms of
+that cutover — provisor feed only, owner-authored events, no
+bot-DM coverage.

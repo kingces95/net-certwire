@@ -7,6 +7,14 @@ Routes:
   GET /auth/slack/callback   validate state, exchange the code at
                              oauth.v2.access, upsert the installation
                              (Codex's CRUD model), small result page
+  GET /v1/routes             public route list (address, fingerprint,
+                             identities, key epoch per registered muse)
+  GET /v1/cert               this provisor's own certmint domain cert,
+                             verbatim — adopters fetch it here instead of
+                             receiving it out of band; it is public,
+                             issuer-signed material, so the mirror needs
+                             no trust. Read from disk per request so a
+                             cert renewal takes effect with no restart.
 
 Installation records live in /etc/myslackproxy/installations.json,
 keyed by enterprise_id + team_id + is_enterprise_install. Bot tokens
@@ -20,6 +28,7 @@ ENV_PATH = os.environ.get('MYSLACKPROXY_ENV', '/etc/myslackproxy/slack.env')
 STORE_PATH = os.environ.get('MYSLACKPROXY_STORE', '/etc/myslackproxy/installations.json')
 KEY_PATH = os.environ.get('MYSLACKPROXY_KEY', '/etc/myslackproxy/store-key')
 ROUTES_PATH = os.environ.get('MYSLACKPROXY_ROUTES', '/etc/myslackproxy/routes.json')
+OWN_CERT_PATH = os.environ.get('MYSLACKPROXY_OWN_CERT', '/etc/myslackproxy/domain-cert.txt')
 MINT_BASE = 'https://certmint.net'
 PUBLIC_BASE = 'https://myslackproxy.net'
 REDIRECT_URI = PUBLIC_BASE + '/auth/slack/callback'
@@ -201,6 +210,17 @@ class H(http.server.BaseHTTPRequestHandler):
                 'nonce': nonce,
                 'signing_string': f'myslackproxy-route-v1\n<serial>\n{nonce}'}).encode(),
                 'application/json')
+            return
+
+        if path == '/v1/cert':
+            try:
+                with open(OWN_CERT_PATH, 'rb') as f:
+                    cert = f.read()
+            except OSError:
+                self._send(404, b'provisor cert not available\n',
+                           'text/plain; charset=utf-8')
+                return
+            self._send(200, cert, 'text/plain; charset=utf-8')
             return
 
         if path == '/v1/routes':
