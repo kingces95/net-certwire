@@ -234,6 +234,59 @@ async def slack_handler(frm, payload):
         log(f"slack via certwire (shadow): event {rec['event_id']} recorded")
 
 
+# ---------- react outbox ----------
+
+async def react_outbox_loop(app):
+    """Relay reaction requests to the provisor (2026-10-24: the
+    per-muse bot apps are gone; the provisor fires reactions.add
+    as the proxy bot). Relay processes spool {channel, ts, name}
+    into the react outbox via proxy_react.py; claim by rename,
+    post to the provisor at /slack/react, write the ack status
+    back as <id>.result (null when the post got no ack)."""
+    outbox = os.path.expanduser(CFG.get(
+        'react_outbox', '~/workspace/slack-relay/react-outbox'))
+    while True:
+        try:
+            os.makedirs(outbox, exist_ok=True)
+            for name in sorted(os.listdir(outbox)):
+                if not name.endswith('.json') or name.startswith('.tmp-'):
+                    continue
+                src = os.path.join(outbox, name)
+                claim = src + '.sending'
+                try:
+                    os.replace(src, claim)
+                except OSError:
+                    continue
+                rid = name[:-len('.json')]
+                status = None
+                try:
+                    req = json.load(open(claim))
+                    body = json.dumps({'channel': req['channel'],
+                                       'ts': req['ts'],
+                                       'name': req['name']})
+                    status = await app.post(CFG['provisor_address'],
+                                            '/slack/react', body,
+                                            ack=True, timeout=10)
+                    log(f'react outbox: {rid} {req["name"]} on '
+                        f'{req["ts"]} -> ack {status}')
+                except Exception as e:
+                    log(f'react outbox: {rid} failed: {e}')
+                try:
+                    rtmp = os.path.join(outbox, f'{rid}.result.tmp')
+                    with open(rtmp, 'w', encoding='utf-8') as f:
+                        f.write(json.dumps({'status': status}))
+                    os.replace(rtmp, os.path.join(outbox, f'{rid}.result'))
+                except OSError:
+                    pass
+                try:
+                    os.unlink(claim)
+                except OSError:
+                    pass
+        except Exception as e:
+            log(f'react outbox loop: {e}')
+        await asyncio.sleep(0.5)
+
+
 # ---------- main ----------
 
 CW = None
@@ -262,6 +315,7 @@ async def main():
     CW = CertwireClient(CFG.get('certwire_url', 'wss://certwire.net'),
                         CERT_TEXT, sign, log=log)
     app = AppClient(CW, log=log)
+    asyncio.ensure_future(react_outbox_loop(app))
     app.route(CFG['knockwire_address'], f"/{CFG['guid']}/", knock_handler)
     app.legacy_route(CFG['provisor_address'], slack_handler)
     CW.whitelist_names = list(CFG.get('whitelist_names', []))
